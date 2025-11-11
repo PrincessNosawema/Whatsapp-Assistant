@@ -1,0 +1,1005 @@
+```json
+{
+  "name": "AI WhatsApp Assistant - Gmail & Calendar",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook/whatsapp",
+        "responseMode": "onReceived",
+        "responseData": "firstEntryJson",
+        "responseCode": 200,
+        "options": {
+          "responseData": "{\"status\":\"received\"}"
+        }
+      },
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "name": "WHATSAPP_INBOUND",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "whatsapp-inbound"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text.body || $json.body.message || $json.text || '' }}"
+            },
+            {
+              "name": "from",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].from || $json.body.from || $json.from || '' }}"
+            },
+            {
+              "name": "message_id",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].id || $json.body.message_id || $json.message_id || '' }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "testing_example",
+              "value": "={{ $json.testing_example || false }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "Book a 30 minute call with Victor next Tuesday at 2pm"
+            },
+            {
+              "name": "from",
+              "value": "+2348012345678"
+            },
+            {
+              "name": "message_id",
+              "value": "test_msg_001"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            },
+            {
+              "name": "testing_example",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c3d4e5f6-a7b8-9012-cdef-123456789012",
+      "name": "Test Data (Optional)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [450, 450],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-goog-api-key",
+              "value": "={{$env.GEMINI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a JSON extractor. Input: \\\"{{ $json.text }}\\\"\\nOutput strict JSON with keys:\\n\\t•\\tintent: one of [check_availability, book_event, confirm_slot, cancel_event, summarize_email, reply_email, send_email, fallback]\\n\\t•\\tconfidence: float 0-1\\n\\t•\\tentities: { name: string|null, email: string|null, datetime: ISO8601|null, duration_minutes: int|null, event_title: string|null, message_id: string|null }\\nReturn only JSON — no commentary.\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"response_mime_type\": \"application/json\"\n  }\n}",
+        "options": {}
+      },
+      "id": "d4e5f6a7-b8c9-0123-def0-123456789013",
+      "name": "Gemini Intent Parser",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response and extract intent/entities\nconst geminiResponse = $input.first().json;\nlet parsedData;\n\ntry {\n  // Gemini returns response in candidates[0].content.parts[0].text\n  const responseText = geminiResponse.candidates[0].content.parts[0].text;\n  parsedData = JSON.parse(responseText);\n} catch (error) {\n  // Fallback if parsing fails\n  parsedData = {\n    intent: 'fallback',\n    confidence: 0,\n    entities: {}\n  };\n}\n\n// Merge with original input data\nreturn {\n  ...parsedData,\n  original_text: $input.first().json.text,\n  from: $input.first().json.from,\n  message_id: $input.first().json.message_id,\n  timestamp: $input.first().json.timestamp\n};"
+      },
+      "id": "e5f6a7b8-c9d0-1234-ef01-234567890134",
+      "name": "Parse Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": ""
+          },
+          "conditions": [
+            {
+              "id": "intent_check_availability",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "check_availability",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_book_event",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "book_event",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_confirm_slot",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "confirm_slot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_cancel_event",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "cancel_event",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_summarize_email",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "summarize_email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_reply_email",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "reply_email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "intent_send_email",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "send_email",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "f6a7b8c9-d0e1-2345-f012-345678901235",
+      "name": "Intent Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "lookup",
+        "documentId": "={{$env.LOG_SHEET_ID}}",
+        "sheetName": "Contacts",
+        "columns": {
+          "mappings": [
+            {
+              "lookupColumn": "Name",
+              "lookupValue": "={{ $json.entities.name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a7b8c9d0-e1f2-3456-0123-456789012346",
+      "name": "Lookup Contact (Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1250, 150],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize datetime to ISO8601 with Africa/Lagos timezone\nconst entities = $input.first().json.entities || {};\nconst datetimeStr = entities.datetime;\n\nif (!datetimeStr) {\n  return $input.first().json;\n}\n\n// Parse natural language datetime and convert to Africa/Lagos timezone\nconst luxon = require('luxon');\nconst { DateTime } = luxon;\n\nlet normalizedDatetime;\ntry {\n  // Try parsing as ISO first\n  normalizedDatetime = DateTime.fromISO(datetimeStr, { zone: 'Africa/Lagos' });\n  \n  if (!normalizedDatetime.isValid) {\n    // If not valid ISO, try parsing as relative date\n    // This is a simplified parser - in production you'd use a more robust library\n    const now = DateTime.now().setZone('Africa/Lagos');\n    \n    if (datetimeStr.includes('tomorrow')) {\n      normalizedDatetime = now.plus({ days: 1 });\n    } else if (datetimeStr.includes('next week')) {\n      normalizedDatetime = now.plus({ weeks: 1 });\n    } else if (datetimeStr.includes('Tuesday')) {\n      // Find next Tuesday\n      const daysUntilTuesday = (2 - now.weekday + 7) % 7 || 7;\n      normalizedDatetime = now.plus({ days: daysUntilTuesday });\n    } else {\n      normalizedDatetime = now;\n    }\n    \n    // Extract time if present (e.g., \"2pm\")\n    const timeMatch = datetimeStr.match(/(\\d{1,2})(am|pm)/i);\n    if (timeMatch) {\n      let hour = parseInt(timeMatch[1]);\n      if (timeMatch[2].toLowerCase() === 'pm' && hour !== 12) hour += 12;\n      if (timeMatch[2].toLowerCase() === 'am' && hour === 12) hour = 0;\n      normalizedDatetime = normalizedDatetime.set({ hour, minute: 0, second: 0 });\n    }\n  }\n} catch (error) {\n  // Fallback to current time\n  normalizedDatetime = DateTime.now().setZone('Africa/Lagos');\n}\n\nreturn {\n  ...$input.first().json,\n  entities: {\n    ...entities,\n    datetime: normalizedDatetime.toISO(),\n    datetime_formatted: normalizedDatetime.toFormat('yyyy-MM-dd HH:mm:ss')\n  },\n  timezone: 'Africa/Lagos'\n};"
+      },
+      "id": "b8c9d0e1-f2a3-4567-1234-567890123457",
+      "name": "Normalize Datetime",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 150]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendarId": "primary",
+        "returnAll": false,
+        "limit": 10,
+        "options": {
+          "timeMin": "={{ $json.entities.datetime }}",
+          "timeMax": "={{ DateTime.fromISO($json.entities.datetime).plus({hours: 8}).toISO() }}",
+          "timeZone": "Africa/Lagos"
+        }
+      },
+      "id": "c9d0e1f2-a3b4-5678-2345-678901234568",
+      "name": "Check Availability",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 2,
+      "position": [1650, 150],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate available time slots based on calendar check\nconst events = $input.all();\nconst requestedTime = DateTime.fromISO($input.first().json.entities.datetime);\nconst duration = $input.first().json.entities.duration_minutes || 30;\n\nconst luxon = require('luxon');\nconst { DateTime } = luxon;\n\n// Find conflicts\nconst hasConflict = events.some(item => {\n  const event = item.json;\n  if (!event.start || !event.end) return false;\n  \n  const eventStart = DateTime.fromISO(event.start.dateTime || event.start.date);\n  const eventEnd = DateTime.fromISO(event.end.dateTime || event.end.date);\n  const requestedEnd = requestedTime.plus({ minutes: duration });\n  \n  return (requestedTime >= eventStart && requestedTime < eventEnd) ||\n         (requestedEnd > eventStart && requestedEnd <= eventEnd);\n});\n\nlet availableSlots = [];\nif (hasConflict) {\n  // Generate 3 alternative slots\n  for (let i = 1; i <= 3; i++) {\n    const altTime = requestedTime.plus({ hours: i });\n    availableSlots.push({\n      start: altTime.toISO(),\n      formatted: altTime.toFormat('EEE, MMM d \\\\a\\\\t h:mm a')\n    });\n  }\n}\n\nreturn {\n  ...$input.first().json,\n  availability: {\n    requested_slot_available: !hasConflict,\n    requested_time: requestedTime.toISO(),\n    requested_time_formatted: requestedTime.toFormat('EEE, MMM d \\\\a\\\\t h:mm a'),\n    alternative_slots: availableSlots,\n    duration_minutes: duration\n  }\n};"
+      },
+      "id": "d0e1f2a3-b4c5-6789-3456-789012345679",
+      "name": "Analyze Availability",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 150]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "calendarId": "primary",
+        "start": "={{ $json.entities.datetime }}",
+        "end": "={{ DateTime.fromISO($json.entities.datetime).plus({minutes: $json.entities.duration_minutes || 30}).toISO() }}",
+        "summary": "={{ $json.entities.event_title || 'Meeting with ' + $json.entities.name }}",
+        "options": {
+          "attendees": "={{ $json.contact_email || $json.entities.email }}",
+          "description": "Scheduled via WhatsApp Assistant",
+          "timeZone": "Africa/Lagos"
+        }
+      },
+      "id": "e1f2a3b4-c5d6-7890-4567-890123456780",
+      "name": "Create Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 2,
+      "position": [2050, 250],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 5,
+        "filters": {
+          "includeSpamTrash": false,
+          "labelIds": ["INBOX", "UNREAD"]
+        }
+      },
+      "id": "f2a3b4c5-d6e7-8901-5678-901234567891",
+      "name": "Fetch Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1250, 600],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-goog-api-key",
+              "value": "={{$env.GEMINI_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"Summarize the email text below into:\\n\\t•\\tsummary: 2-3 sentence summary\\n\\t•\\tkey_points: array of 3 bullets\\n\\t•\\tsuggested_replies: array of up to 3 short reply options\\nEmail: \\\"{{ $json.snippet || $json.textPlain || $json.textHtml }}\\\"\\nReturn only JSON.\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"response_mime_type\": \"application/json\"\n  }\n}",
+        "options": {}
+      },
+      "id": "a3b4c5d6-e7f8-9012-6789-012345678902",
+      "name": "Gemini Summarize",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1450, 600]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.contact_email || $json.entities.email }}",
+        "subject": "={{ $json.email_subject || 'Meeting Confirmation' }}",
+        "emailType": "text",
+        "message": "={{ $json.email_body || 'Your meeting has been confirmed.' }}",
+        "options": {}
+      },
+      "id": "b4c5d6e7-f8a9-0123-7890-123456789013",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2250, 350],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v16.0/={{$env.WHATSAPP_PHONE_ID}}/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.WHATSAPP_API_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.from }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"{{ $json.response_message }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "c5d6e7f8-a9b0-1234-8901-234567890124",
+      "name": "WhatsApp Outbound",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.tavily.com/search",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer {{$env.TAVILY_API_KEY}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"{{ $json.search_query }}\",\n  \"max_results\": 3\n}",
+        "options": {}
+      },
+      "id": "d6e7f8a9-b0c1-2345-9012-345678901235",
+      "name": "Tavily Web Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 800],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "={{$env.LOG_SHEET_ID}}",
+        "sheetName": "Logs",
+        "columns": {
+          "mappings": [
+            {
+              "column": "Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "column": "User Phone",
+              "value": "={{ $json.from }}"
+            },
+            {
+              "column": "Intent",
+              "value": "={{ $json.intent }}"
+            },
+            {
+              "column": "Entities",
+              "value": "={{ JSON.stringify($json.entities) }}"
+            },
+            {
+              "column": "Action",
+              "value": "={{ $json.action_taken || 'processed' }}"
+            },
+            {
+              "column": "Result",
+              "value": "={{ $json.result || 'success' }}"
+            },
+            {
+              "column": "Reference ID",
+              "value": "={{ $json.message_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e7f8a9b0-c1d2-3456-0123-456789012346",
+      "name": "Log Interaction",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [2650, 300],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format response message for check_availability intent\nconst availability = $input.first().json.availability;\nlet message;\n\nif (availability.requested_slot_available) {\n  message = `Great! ${availability.requested_time_formatted} is available. Reply with \"confirm\" to book this ${availability.duration_minutes}-minute slot.`;\n} else {\n  message = `Sorry, ${availability.requested_time_formatted} is not available. Here are some alternatives:\\n`;\n  availability.alternative_slots.forEach((slot, idx) => {\n    message += `\\n${idx + 1}. ${slot.formatted}`;\n  });\n  message += '\\n\\nReply with the number to book one of these slots.';\n}\n\nreturn {\n  ...$input.first().json,\n  response_message: message,\n  action_taken: 'check_availability',\n  result: 'success'\n};"
+      },
+      "id": "f8a9b0c1-d2e3-4567-1234-567890123457",
+      "name": "Format Availability Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format response message for booking confirmation\nconst event = $input.first().json;\nconst entities = event.entities || {};\n\nconst message = `✅ Meeting booked!\\n\\nDetails:\\n• When: ${event.availability?.requested_time_formatted || 'As requested'}\\n• Duration: ${entities.duration_minutes || 30} minutes\\n• With: ${entities.name || 'Guest'}\\n\\nA confirmation email has been sent.`;\n\nreturn {\n  ...event,\n  response_message: message,\n  action_taken: 'book_event',\n  result: 'success',\n  email_subject: `Meeting Confirmation - ${entities.event_title || 'Meeting'}`,\n  email_body: `Hello,\\n\\nYour meeting has been scheduled:\\n\\nDate/Time: ${event.availability?.requested_time_formatted}\\nDuration: ${entities.duration_minutes || 30} minutes\\n\\nLooking forward to connecting!\\n\\nBest regards`\n};"
+      },
+      "id": "a9b0c1d2-e3f4-5678-2345-678901234568",
+      "name": "Format Booking Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse email summary from Gemini and format WhatsApp response\nconst geminiResponse = $input.first().json;\nconst emailData = $input.first().json;\n\nlet summary;\ntry {\n  const responseText = geminiResponse.candidates[0].content.parts[0].text;\n  summary = JSON.parse(responseText);\n} catch (error) {\n  summary = {\n    summary: 'Unable to summarize email',\n    key_points: [],\n    suggested_replies: []\n  };\n}\n\nlet message = `📧 Email Summary:\\n\\n${summary.summary}\\n\\nKey Points:`;\nsummary.key_points.forEach((point, idx) => {\n  message += `\\n${idx + 1}. ${point}`;\n});\n\nif (summary.suggested_replies && summary.suggested_replies.length > 0) {\n  message += '\\n\\nSuggested Replies:';\n  summary.suggested_replies.forEach((reply, idx) => {\n    message += `\\n${idx + 1}. ${reply}`;\n  });\n  message += '\\n\\nReply with the number to send that response.';\n}\n\nreturn {\n  ...emailData,\n  summary,\n  response_message: message,\n  action_taken: 'summarize_email',\n  result: 'success'\n};"
+      },
+      "id": "b0c1d2e3-f4a5-6789-3456-789012345679",
+      "name": "Format Email Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge contact email from lookup into main flow\nconst mainData = $input.first().json;\nconst lookupResult = $input.all()[1]?.json;\n\nlet contactEmail = mainData.entities?.email;\n\nif (lookupResult && lookupResult.Email) {\n  contactEmail = lookupResult.Email;\n}\n\nreturn {\n  ...mainData,\n  contact_email: contactEmail\n};"
+      },
+      "id": "c1d2e3f4-a5b6-7890-4567-890123456780",
+      "name": "Merge Contact Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 250]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "calendarId": "primary",
+        "eventId": "={{ $json.event_id_to_cancel }}"
+      },
+      "id": "d2e3f4a5-b6c7-8901-5678-901234567891",
+      "name": "Delete Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 2,
+      "position": [1450, 450],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format cancellation response\nconst message = `✅ Your meeting has been cancelled successfully.`;\n\nreturn {\n  ...$input.first().json,\n  response_message: message,\n  action_taken: 'cancel_event',\n  result: 'success'\n};"
+      },
+      "id": "e3f4a5b6-c7d8-9012-6789-012345678902",
+      "name": "Format Cancel Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 450]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Fall​​​​​​​​​​​​​​​​lback handler for unknown intents\nconst message = `I'm not sure I understood that. I can help you with:\\n\\n• Checking calendar availability\\n• Booking meetings\\n• Cancelling events\\n• Summarizing emails\\n• Sending email replies\\n\\nPlease try rephrasing your request.`;\n\nreturn {\n  ...$input.first().json,\n  response_message: message,\n  action_taken: 'fallback',\n  result: 'fallback'\n};"
+      },
+      "id": "f4a5b6c7-d8e9-0123-7890-123456789013",
+      "name": "Fallback Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handler - format error message for user\nconst error = $input.first().json.error || {};\nconst originalData = $input.first().json;\n\nconst message = `Sorry — I couldn't process that. Can you rephrase or ask a simpler request?`;\n\nreturn {\n  ...originalData,\n  response_message: message,\n  action_taken: 'error',\n  result: 'failure',\n  error_message: error.message || 'Unknown error',\n  error_details: JSON.stringify(error)\n};"
+      },
+      "id": "a5b6c7d8-e9f0-1234-8901-234567890124",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 500]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendarId": "primary",
+        "returnAll": false,
+        "limit": 10,
+        "options": {
+          "query": "={{ $json.entities.event_title || $json.entities.name }}",
+          "timeMin": "={{ DateTime.now().setZone('Africa/Lagos').minus({days: 7}).toISO() }}",
+          "timeMax": "={{ DateTime.now().setZone('Africa/Lagos').plus({days: 30}).toISO() }}",
+          "timeZone": "Africa/Lagos"
+        }
+      },
+      "id": "b6c7d8e9-f0a1-2345-9012-345678901235",
+      "name": "Find Event to Cancel",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 2,
+      "position": [1250, 450],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_OAUTH2",
+          "name": "GOOGLE_OAUTH2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract event ID from found events for cancellation\nconst events = $input.all();\nconst originalData = $input.first().json;\n\nlet eventId = null;\nif (events.length > 0 && events[0].[json.id](http://json.id)) {\n  eventId = events[0].[json.id](http://json.id);\n}\n\nif (!eventId) {\n  return {\n    ...originalData,\n    response_message: 'Could not find a matching event to cancel. Please provide more details.',\n    action_taken: 'cancel_event_failed',\n    result: 'failure'\n  };\n}\n\nreturn {\n  ...originalData,\n  event_id_to_cancel: eventId\n};"
+      },
+      "id": "c7d8e9f0-a1b2-3456-0123-456789012346",
+      "name": "Extract Event ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 450]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format reply email response\nconst entities = $input.first().json.entities || {};\nconst summary = $input.first().json.summary || {};\n\nconst message = `✅ Email reply sent successfully!`;\n\nreturn {\n  ...$input.first().json,\n  response_message: message,\n  action_taken: 'reply_email',\n  result: 'success',\n  email_subject: `Re: ${entities.event_title || 'Your message'}`,\n  email_body: summary.suggested_replies?.[0] || 'Thank you for your email.'\n};"
+      },
+      "id": "d8e9f0a1-b2c3-4567-1234-567890123457",
+      "name": "Format Reply Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format send email response\nconst entities = $input.first().json.entities || {};\n\nconst message = `✅ Email sent successfully to ${entities.email || entities.name}!`;\n\nreturn {\n  ...$input.first().json,\n  response_message: message,\n  action_taken: 'send_email',\n  result: 'success',\n  email_subject: entities.event_title || 'Message from WhatsApp Assistant',\n  email_body: $input.first().json.original_text || 'Sent via WhatsApp Assistant'\n};"
+      },
+      "id": "e9f0a1b2-c3d4-5678-2345-678901234568",
+      "name": "Format Send Email Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 800]
+    }
+  ],
+  "connections": {
+    "WHATSAPP_INBOUND": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Gemini Intent Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Intent Parser": {
+      "main": [
+        [
+          {
+            "node": "Parse Gemini Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [
+          {
+            "node": "Intent Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Router": {
+      "main": [
+        [
+          {
+            "node": "Lookup Contact (Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lookup Contact (Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Event to Cancel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lookup Contact (Sheets)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Contact (Sheets)": {
+      "main": [
+        [
+          {
+            "node": "Merge Contact Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Contact Data": {
+      "main": [
+        [
+          {
+            "node": "Normalize Datetime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Datetime": {
+      "main": [
+        [
+          {
+            "node": "Check Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Availability": {
+      "main": [
+        [
+          {
+            "node": "Analyze Availability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Availability": {
+      "main": [
+        [
+          {
+            "node": "Format Availability Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format Booking Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Availability Response": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Event": {
+      "main": [
+        [
+          {
+            "node": "Format Booking Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Booking Response": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Outbound": {
+      "main": [
+        [
+          {
+            "node": "Log Interaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Email": {
+      "main": [
+        [
+          {
+            "node": "Gemini Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Summarize": {
+      "main": [
+        [
+          {
+            "node": "Format Email Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format Reply Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email Summary": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Reply Response": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Event to Cancel": {
+      "main": [
+        [
+          {
+            "node": "Extract Event ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Event ID": {
+      "main": [
+        [
+          {
+            "node": "Delete Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Event": {
+      "main": [
+        [
+          {
+            "node": "Format Cancel Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Cancel Response": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback Handler": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Send Email Response": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "WhatsApp Outbound",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Lagos",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-15T10:00:00.000Z",
+  "versionId": "1",
+  "active": true,
+  "id": "whatsapp-ai-assistant-001",
+  "meta": {
+    "instanceId": "n8n-instance-001"
+  }
+}
+
+
+```

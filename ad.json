@@ -1,0 +1,650 @@
+{
+  "name": "Advanced AI WhatsApp Assistant v2",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "572603ea-15bf-429a-b386-95871f5fdeac",
+        "options": {
+          "responseData": "OK"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "id": "webhook-entry",
+      "name": "WhatsApp Webhook",
+      "webhookId": "8dbcd145-aec2-4af2-9b2d-ad684c8ae9cd"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Advanced message parsing with validation and logging\ntry {\n  const body = $input.item.json.body;\n  const messages = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];\n  const contacts = body?.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];\n  \n  if (!messages) {\n    return { json: { hasMessage: false, skipReason: 'no_message' } };\n  }\n\n  // Extract comprehensive message data\n  const messageData = {\n    hasMessage: true,\n    messageType: messages.type || 'unknown',\n    userMessage: messages.text?.body || messages.interactive?.button_reply?.title || '',\n    userPhone: messages.from || '',\n    userName: contacts?.profile?.name || 'User',\n    timestamp: new Date(parseInt(messages.timestamp) * 1000).toISOString(),\n    messageId: messages.id || '',\n    isReply: !!messages.context,\n    contextMessageId: messages.context?.id || null,\n    \n    // Interactive message handling\n    interactiveType: messages.interactive?.type || null,\n    buttonReply: messages.interactive?.button_reply?.id || null,\n    listReply: messages.interactive?.list_reply?.id || null,\n    \n    // Media handling\n    hasMedia: ['image', 'video', 'document', 'audio'].includes(messages.type),\n    mediaId: messages.image?.id || messages.video?.id || messages.document?.id || messages.audio?.id || null,\n    caption: messages.image?.caption || messages.video?.caption || messages.document?.caption || '',\n    \n    // Location handling\n    location: messages.location ? {\n      latitude: messages.location.latitude,\n      longitude: messages.location.longitude,\n      name: messages.location.name,\n      address: messages.location.address\n    } : null,\n    \n    // Session tracking\n    conversationId: `${messages.from}_${new Date().toISOString().split('T')[0]}`\n  };\n\n  // Priority detection\n  const urgentKeywords = ['urgent', 'asap', 'emergency', 'critical', 'immediately', 'now'];\n  messageData.isPriority = urgentKeywords.some(keyword => \n    messageData.userMessage.toLowerCase().includes(keyword)\n  );\n\n  return { json: messageData };\n  \n} catch (error) {\n  return { \n    json: { \n      hasMessage: false, \n      skipReason: 'parsing_error',\n      error: error.message \n    } \n  };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [200, 0],
+      "id": "message-parser",
+      "name": "Advanced Message Parser"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "has-message",
+              "leftValue": "={{ $json.hasMessage }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            },
+            {
+              "id": "is-text-or-interactive",
+              "leftValue": "={{ ['text', 'interactive', 'button', 'list'].includes($json.messageType) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [400, 0],
+      "id": "message-filter",
+      "name": "Message Filter"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Rate limiting check (max 10 requests per user per minute)\nconst userPhone = $input.item.json.userPhone;\nconst currentTime = Date.now();\n\n// Initialize rate limit storage\nif (!globalThis.rateLimits) {\n  globalThis.rateLimits = {};\n}\n\n// Clean old entries (older than 1 minute)\nif (globalThis.rateLimits[userPhone]) {\n  globalThis.rateLimits[userPhone] = globalThis.rateLimits[userPhone].filter(\n    timestamp => currentTime - timestamp < 60000\n  );\n}\n\n// Initialize user rate limit array\nif (!globalThis.rateLimits[userPhone]) {\n  globalThis.rateLimits[userPhone] = [];\n}\n\n// Check rate limit\nif (globalThis.rateLimits[userPhone].length >= 10) {\n  return {\n    json: {\n      ...($input.item.json),\n      rateLimited: true,\n      waitTime: Math.ceil((60000 - (currentTime - globalThis.rateLimits[userPhone][0])) / 1000)\n    }\n  };\n}\n\n// Add current request\nglobalThis.rateLimits[userPhone].push(currentTime);\n\nreturn {\n  json: {\n    ...($input.item.json),\n    rateLimited: false\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "id": "rate-limiter",
+      "name": "Rate Limiter"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "not-rate-limited",
+              "leftValue": "={{ $json.rateLimited }}",
+              "rightValue": "false",
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [800, 0],
+      "id": "rate-limit-check",
+      "name": "Rate Limit Check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v22.0/812226575317061/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.userPhone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"⏳ {{ $json.isPriority ? 'Priority request detected! ' : '' }}Processing your request... This may take a few moments.\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, -100],
+      "id": "typing-indicator",
+      "name": "Send Typing Indicator",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "sPfnz3eITOXitarx",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "=You are an advanced AI assistant managing Gmail, Google Calendar, and Contacts via WhatsApp for {{ $json.userName }}.\n\n🎯 CAPABILITIES:\n• Gmail: Read (with filters), send, reply, delete, search by date/sender/subject, handle attachments\n• Calendar: View availability, create/update/delete events, check conflicts, manage recurring events, handle timezones\n• Contacts: Lookup by name/email/phone, get contact details\n• Smart Suggestions: Propose meeting times, draft email templates, schedule follow-ups\n\n📋 ENHANCED RULES:\n1. ALWAYS confirm before: sending emails, deleting anything, creating/modifying events\n2. ALWAYS check calendar for conflicts before scheduling\n3. ALWAYS look up contact details when only names are provided\n4. For email searches, intelligently interpret requests:\n   - \"recent emails\" = last 7 days\n   - \"unread from John\" = is:unread from:john\n   - \"urgent\" = subject:(urgent OR important OR asap)\n5. When scheduling, suggest 2-3 time slots if user is vague\n6. Provide context-aware responses (e.g., \"You have 3 meetings tomorrow\")\n7. Handle multi-step tasks gracefully\n8. Use natural language for dates/times, but store in ISO 8601\n9. Track conversation context across messages\n10. Proactively offer helpful suggestions\n\n⚙️ RESPONSE FORMAT:\n• Keep responses concise (2-4 sentences max)\n• Use emojis sparingly for clarity (✅ ❌ 📅 📧 ⚠️)\n• Format dates as: \"Monday, Nov 18 at 2:00 PM WAT\"\n• For confirmations, clearly state what will happen\n• If ambiguous, ask ONE clarifying question\n\n🌍 CONTEXT:\n• Current Date: {{ $now.format('dddd, MMMM D, YYYY') }}\n• Current Time: {{ $now.format('h:mm A') }}\n• Timezone: Africa/Lagos (WAT, UTC+1)\n• User: {{ $json.userName }} ({{ $json.userPhone }})\n• Conversation ID: {{ $json.conversationId }}\n• Priority Request: {{ $json.isPriority ? 'YES - Handle urgently' : 'No' }}\n\n💡 SMART BEHAVIORS:\n• Learn user preferences from conversation history\n• Suggest optimal meeting times based on calendar\n• Remind about upcoming events when relevant\n• Batch related tasks when possible\n• Detect and prevent scheduling conflicts\n• Auto-lookup emails for known contacts",
+          "maxIterations": 5
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3,
+      "position": [1400, 0],
+      "id": "advanced-ai-agent",
+      "name": "Advanced AI Agent"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.0-flash-exp",
+        "options": {
+          "maxOutputTokens": 4096,
+          "temperature": 0.3,
+          "topP": 0.95,
+          "topK": 40,
+          "safetySettings": {
+            "values": [
+              {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+              },
+              {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [1200, 200],
+      "id": "gemini-model",
+      "name": "Gemini 2.0 Flash",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "fXA7YUlVMoYLYZOc",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.conversationId }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [1200, 300],
+      "id": "conversation-memory",
+      "name": "Conversation Memory"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=🔍 Advanced Gmail Search & Read\n\nSearch emails with powerful filters:\n• Time-based: \"after:2024/11/01\" \"before:2024/11/15\" \"newer_than:7d\"\n• Sender/Recipient: \"from:email@domain.com\" \"to:recipient@email.com\"\n• Subject: \"subject:meeting\" \"subject:(urgent OR important)\"\n• Status: \"is:unread\" \"is:starred\" \"is:important\"\n• Attachments: \"has:attachment\" \"filename:pdf\"\n• Labels: \"label:work\" \"category:primary\"\n• Combinations: \"from:john is:unread subject:report\"\n\nReturns: subject, sender, date, snippet, full body, messageId (save for replies), labels, attachments list.\n\nDefault limit: 5 emails. Sorted by newest first.",
+        "operation": "getAll",
+        "limit": 10,
+        "simple": false,
+        "filters": {
+          "includeSpamTrash": false,
+          "q": "={{ $json.search || 'is:unread' }}"
+        },
+        "options": {
+          "attachmentsPrefix": "attachment_"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.1,
+      "position": [1200, 400],
+      "id": "gmail-search",
+      "name": "Gmail Search & Read",
+      "webhookId": "gmail-search-001",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "HRJR2oMopSTAD0CH",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=📧 Send New Email\n\nSend a brand new email (not a reply).\n\nRequired parameters:\n• recipientEmail: Valid email address\n• subject: Email subject line\n• messageBody: Email content (supports HTML)\n\nOptional parameters:\n• ccEmails: Comma-separated CC recipients\n• bccEmails: Comma-separated BCC recipients\n• priority: \"high\" or \"normal\" (default)\n\n⚠️ IMPORTANT:\n1. MUST get explicit user confirmation before sending\n2. If user provides only a name, use Contact Lookup tool first to get email\n3. Confirm recipient, subject, and preview message content\n4. For bulk emails, send one at a time with confirmation\n\nExample confirmation: \"I'll send an email to john@example.com with subject 'Meeting Follow-up'. The message says: [preview]. Should I send this?\"",
+        "sendTo": "={{ $json.recipientEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "message": "={{ $json.messageBody }}",
+        "options": {
+          "ccList": "={{ $json.ccEmails || '' }}",
+          "bccList": "={{ $json.bccEmails || '' }}",
+          "priority": "={{ $json.priority || 'normal' }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.1,
+      "position": [1200, 500],
+      "id": "gmail-send",
+      "name": "Gmail Send New Email",
+      "webhookId": "gmail-send-001",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "HRJR2oMopSTAD0CH",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=💬 Reply to Email\n\nReply to an existing email in the conversation thread.\n\nRequired parameters:\n• messageId: The ID from Gmail Search results\n• replyText: Your reply message (supports HTML)\n\nOptional parameters:\n• replyToAll: true/false (default: false) - Reply to all recipients\n\n⚠️ IMPORTANT:\n1. MUST confirm before sending\n2. Always use messageId from Search results\n3. For \"Reply All\", explicitly ask user if they want to include all recipients\n4. Show preview of reply before sending\n\nExample: \"I'll reply to the email from john@example.com about 'Project Update' with: [preview]. Reply to sender only or Reply All?\"",
+        "operation": "reply",
+        "messageId": "={{ $json.messageId }}",
+        "emailType": "html",
+        "message": "={{ $json.replyText }}",
+        "options": {
+          "replyToSenderOnly": "={{ $json.replyToAll ? false : true }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.1,
+      "position": [1200, 600],
+      "id": "gmail-reply",
+      "name": "Gmail Reply to Email",
+      "webhookId": "gmail-reply-001",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "HRJR2oMopSTAD0CH",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=🗑️ Delete Email (Permanent)\n\nPermanently delete an email. This action CANNOT be undone.\n\nRequired parameter:\n• messageIdToDelete: The message ID from Search results\n\n⚠️ CRITICAL WARNINGS:\n1. MUST get explicit user confirmation: \"Are you sure you want to permanently delete [email subject/sender]?\"\n2. Deleted emails cannot be recovered\n3. For batch deletion, confirm count: \"This will permanently delete 5 emails. Confirm?\"\n4. Consider suggesting Archive instead of Delete for important emails\n\nSafer alternative: Suggest moving to Trash (archive) instead of permanent deletion when appropriate.",
+        "operation": "delete",
+        "messageId": "={{ $json.messageIdToDelete }}"
+      },
+      "type": "n8n-nodes-base.gmailTool",
+      "typeVersion": 2.1,
+      "position": [1200, 700],
+      "id": "gmail-delete",
+      "name": "Gmail Delete Email",
+      "webhookId": "gmail-delete-001",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "HRJR2oMopSTAD0CH",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=📅 View Calendar Schedule\n\nRetrieve calendar events to check availability and view schedule.\n\nOptional parameters:\n• startTime: ISO 8601 format (e.g., \"2024-11-15T09:00:00+01:00\"). Default: now\n• endTime: ISO 8601 format. Default: 7 days from now\n• maxResults: Number of events to return (1-50). Default: 10\n• searchQuery: Search in event titles/descriptions\n\nReturns:\n• Event title, description, location\n• Start/end times (with timezone)\n• Attendees list with RSVP status\n• Event ID (needed for updates/deletions)\n• Recurring event info\n• Organizer details\n\nUsage examples:\n• \"Show my schedule for today\" → startTime: today 00:00, endTime: today 23:59\n• \"What meetings do I have this week?\" → startTime: now, endTime: +7 days\n• \"Am I free tomorrow at 2pm?\" → Check for conflicts in that time slot\n• \"Find my meeting with John\" → Use searchQuery: \"John\"\n\nSmart tips:\n• Always check calendar before suggesting meeting times\n• When asked \"am I free?\", look for overlapping events\n• Consider travel time between back-to-back meetings",
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "princessnosawema@gmail.com",
+          "mode": "list",
+          "cachedResultName": "princessnosawema@gmail.com"
+        },
+        "limit": "={{ $json.maxResults || 10 }}",
+        "options": {
+          "timeMin": "={{ $json.startTime || $now.toISO() }}",
+          "timeMax": "={{ $json.endTime || $now.plus({days: 7}).toISO() }}",
+          "query": "={{ $json.searchQuery || '' }}",
+          "timeZone": {
+            "__rl": true,
+            "value": "Africa/Lagos",
+            "mode": "list",
+            "cachedResultName": "Africa/Lagos"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [1200, 800],
+      "id": "calendar-view",
+      "name": "Calendar View Schedule",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "Yr2aMpjLdZG75zcW",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=📅 Create Calendar Event\n\nCreate a new calendar event with full details.\n\nRequired parameters:\n• title: Event title/summary\n• startDateTime: ISO 8601 format with +01:00 timezone (e.g., \"2024-11-15T14:00:00+01:00\")\n• endDateTime: ISO 8601 format with +01:00 timezone\n\nOptional parameters:\n• eventDescription: Detailed description\n• eventLocation: Physical location or meeting link\n• attendeeEmails: Comma-separated email addresses\n• recurrence: RRULE format (e.g., \"RRULE:FREQ=WEEKLY;COUNT=10\" for weekly 10 times)\n• reminders: Minutes before event (e.g., \"15,60\" for 15min and 1hr reminders)\n• conferenceData: \"hangoutsMeet\" to add Google Meet link\n• colorId: Calendar color (1-11)\n\n⚠️ IMPORTANT WORKFLOW:\n1. ALWAYS check calendar for conflicts first using Calendar View\n2. If conflict found, suggest 2-3 alternative time slots\n3. Confirm ALL details with user: title, date, time, duration, attendees\n4. For recurring events, clearly explain the recurrence pattern\n5. Attendees will receive email invitations automatically\n\nDate/Time handling:\n• User says \"tomorrow at 2pm\" → Convert to ISO 8601: Tomorrow's date + \"14:00:00+01:00\"\n• User says \"next Monday 10am for 1 hour\" → Start: Monday 10:00, End: Monday 11:00\n• Always include +01:00 timezone offset for Lagos/WAT\n\nConflict resolution:\n• If conflict detected: \"You have a meeting from 2-3pm. I can schedule this at 3:30pm or 4pm instead. Which works?\"\n\nExample confirmation: \"I'll create 'Team Standup' on Monday Nov 18 from 10:00 AM to 10:30 AM WAT, with john@example.com and sarah@example.com. Shall I proceed?\"",
+        "calendar": {
+          "__rl": true,
+          "value": "princessnosawema@gmail.com",
+          "mode": "list",
+          "cachedResultName": "princessnosawema@gmail.com"
+        },
+        "start": "={{ $json.startDateTime }}",
+        "end": "={{ $json.endDateTime }}",
+        "additionalFields": {
+          "summary": "={{ $json.title }}",
+          "description": "={{ $json.eventDescription || '' }}",
+          "location": "={{ $json.eventLocation || '' }}",
+          "attendees": "={{ $json.attendeeEmails || '' }}",
+          "sendUpdates": "all",
+          "conferenceData": "={{ $json.conferenceData || '' }}",
+          "colorId": "={{ $json.colorId || '' }}",
+          "recurrence": "={{ $json.recurrence ? [$json.recurrence] : [] }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [1200, 900],
+      "id": "calendar-create",
+      "name": "Calendar Create Event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "Yr2aMpjLdZG75zcW",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=✏️ Update Calendar Event\n\nModify an existing calendar event.\n\nRequired parameter:\n• eventId: Event ID from Calendar View results\n\nOptional parameters (only provide what needs to change):\n• newTitle: Updated event title\n• newStartTime: New start time (ISO 8601 with +01:00)\n• newEndTime: New end time (ISO 8601 with +01:00)\n• eventDescription: Updated description\n• eventLocation: Updated location\n• attendeeEmails: Updated attendee list (replaces existing)\n• addAttendees: Comma-separated emails to ADD to existing attendees\n• removeAttendees: Comma-separated emails to REMOVE from attendees\n\n⚠️ IMPORTANT:\n1. MUST confirm changes with user before updating\n2. If changing time, check for new conflicts\n3. All attendees will be notified of changes automatically\n4. Clearly state what's being changed: \"I'll move your 2pm meeting to 3pm. Confirm?\"\n5. For recurring events, ask if change applies to \"this event only\" or \"all events\"\n\nTime change example:\n• User: \"Move my 2pm meeting to 3pm tomorrow\"\n• Agent: First use Calendar View to find the event at 2pm\n• Agent: Then update with new start/end times\n• Confirm: \"I'll reschedule 'Client Call' from 2pm to 3pm tomorrow. Attendees will be notified. OK?\"\n\nAttendee management:\n• Adding: \"I'll add mike@example.com to the meeting. He'll receive an invitation.\"\n• Removing: \"I'll remove sarah@example.com from the meeting. She'll be notified of the cancellation.\"",
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "value": "princessnosawema@gmail.com",
+          "mode": "list",
+          "cachedResultName": "princessnosawema@gmail.com"
+        },
+        "eventId": "={{ $json.eventId }}",
+        "updateFields": {
+          "summary": "={{ $json.newTitle || '' }}",
+          "start": "={{ $json.newStartTime || '' }}",
+          "end": "={{ $json.newEndTime || '' }}",
+          "description": "={{ $json.eventDescription || '' }}",
+          "location": "={{ $json.eventLocation || '' }}",
+          "attendees": "={{ $json.attendeeEmails || '' }}",
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [1200, 1000],
+      "id": "calendar-update",
+      "name": "Calendar Update Event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "Yr2aMpjLdZG75zcW",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=🗑️ Delete Calendar Event\n\nCancel and remove a calendar event.\n\nRequired parameter:\n• eventIdToDelete: Event ID from Calendar View results\n\nOptional parameters:\n• deleteRecurring: For recurring events - \"this\" (this event only) or \"all\" (all occurrences). Default: \"this\"\n\n⚠️ CRITICAL:\n1. MUST get explicit user confirmation before deleting\n2. All attendees will be notified of the cancellation\n3. For recurring events, clearly ask: \"Delete this occurrence only or all occurrences?\"\n4. Cannot be undone\n5. Confirm with event details: \"I'll cancel 'Team Meeting' on Monday Nov 18 at 10am. All 5 attendees will be notified. Confirm deletion?\"\n\nRecurring event examples:\n• \"Cancel my Monday standup\" → Delete all occurrences\n• \"Cancel next Monday's standup\" → Delete single occurrence\n• \"Remove all my recurring 1-on-1s with John\" → Delete all in series\n\nAlternative suggestion: If event might be important, suggest rescheduling instead: \"Would you like to reschedule this meeting instead of canceling it?\"",
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "value": "princessnosawema@gmail.com",
+          "mode": "list",
+          "cachedResultName": "princessnosawema@gmail.com"
+        },
+        "eventId": "={{ $json.eventIdToDelete }}",
+        "options": {
+          "sendUpdates": "all"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "typeVersion": 1.3,
+      "position": [1200, 1100],
+      "id": "calendar-delete",
+      "name": "Calendar Delete Event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "Yr2aMpjLdZG75zcW",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "=👤 Contact Lookup\n\nSearch contacts by name, email, or phone number.\n\nRequired parameter:\n• contactName: Name to search for (partial match supported)\n\nOR\n• contactEmail: Email address to search for\n\nOR\n• contactPhone: Phone number to search for\n\nReturns:\n• Full Name\n• Primary Email\n• Phone Number(s)\n• Company/Organization\n• Job Title\n• Notes/Additional Info\n\n💡 SMART USAGE:\n1. Automatically invoked when user provides only a name for emails/meetings\n2. Use fuzzy matching - \"john\" will find \"John Smith\", \"John Doe\", etc.\n3. If multiple matches, ask user to clarify: \"I found 2 Johns - John Smith (Acme Corp) and John Doe (Tech Inc). Which one?\"\n4. Cache results in conversation to avoid repeated lookups\n\nWorkflow examples:\n• User: \"Send email to John about the project\"\n• Agent: Use Contact Lookup with contactName: \"John\"\n• Agent: If found: \"I'll send to john.smith@acme.com. Is this the right John?\"\n• Agent: If not found: \"I don't have John's email in your contacts. Could you provide it?\"\n\n• User: \"Schedule meeting with Sarah and Mike tomorrow at 2pm\"\n• Agent: Lookup both \"Sarah\" and \"Mike\"\n• Agent: Create calendar event with their emails as attendees\n\nError handling:\n• No match: \"I couldn't find [name] in your contacts. Do you have their email address?\"\n• Multiple matches: List options with company/title for disambiguation",
+        "documentId": {
+          "__rl": true,
+          "value": "1--FRHjEyOLnU78CRtdXh33jU3fodV3mDbz_zImmID-o",
+          "mode": "list",
+          "cachedResultName": "Team info"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "={{ $json.searchColumn || 'Name' }}",
+              "lookupValue": "={{ $json.contactName || $json.contactEmail || $json.contactPhone }}"
+            }
+          ]
+        },
+        "options": {
+          "dataLocationOnSheet": {
+            "values": {
+              "rangeDefinition": "detectAutomatically"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleSheetsTool",
+      "typeVersion": 4.7,
+      "position": [1200, 1200],
+      "id": "contact-lookup",
+      "name": "Contact Lookup",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "VaRfVOjmGaodiiBD",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Advanced error handling and response formatting\nconst input = $input.item.json;\nconst userPhone = input.userPhone;\nconst userName = input.userName || 'User';\n\n// Check for various error conditions\nif (input.error) {\n  // Categorize error types\n  const errorMessage = input.error.toLowerCase();\n  \n  let userFriendlyMessage;\n  \n  if (errorMessage.includes('rate limit') || errorMessage.includes('quota')) {\n    userFriendlyMessage = \"⚠️ I'm currently experiencing high demand. Please try again in a few minutes.\";\n  } else if (errorMessage.includes('permission') || errorMessage.includes('unauthorized')) {\n    userFriendlyMessage = \"🔒 I don't have permission to access that resource. Please check my account permissions.\";\n  } else if (errorMessage.includes('not found')) {\n    userFriendlyMessage = \"❌ I couldn't find what you're looking for. Could you provide more details?\";\n  } else if (errorMessage.includes('timeout')) {\n    userFriendlyMessage = \"⏱️ That request took too long. Please try a simpler query or try again.\";\n  } else {\n    userFriendlyMessage = \"❌ I encountered an unexpected error. Please try rephrasing your request or contact support if this persists.\";\n  }\n  \n  return {\n    json: {\n      output: userFriendlyMessage,\n      userPhone: userPhone,\n      errorType: 'agent_error',\n      originalError: input.error\n    }\n  };\n}\n\n// Check for empty output\nif (!input.output || input.output.trim() === '') {\n  return {\n    json: {\n      output: \"🤔 I didn't quite understand that. Could you rephrase or provide more details?\",\n      userPhone: userPhone,\n      errorType: 'empty_response'\n    }\n  };\n}\n\n// Check for output length issues\nif (input.output.length > 4000) {\n  const truncated = input.output.substring(0, 3900);\n  return {\n    json: {\n      output: truncated + \"\\n\\n... (Response truncated due to length. Please ask for specific parts if you need more details.)\",\n      userPhone: userPhone,\n      truncated: true\n    }\n  };\n}\n\n// Success - pass through with metadata\nreturn {\n  json: {\n    output: input.output,\n    userPhone: userPhone,\n    userName: userName,\n    success: true,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1600, 0],
+      "id": "error-handler",
+      "name": "Advanced Error Handler"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Advanced response formatting with WhatsApp markdown support\nconst reply = $input.item.json.output || '';\nconst userPhone = $input.item.json.userPhone || '';\nconst userName = $input.item.json.userName || 'User';\n\n// Format response with proper WhatsApp markdown\nlet formatted = reply\n  // Remove excessive asterisks (keep single for italic, double for bold)\n  .replace(/\\*{3,}/g, '**')\n  // Clean up underscore emphasis\n  .replace(/_{3,}/g, '_')\n  // Remove code block markers if present\n  .replace(/```[\\s\\S]*?```/g, (match) => match.replace(/```/g, ''))\n  // Clean up excessive newlines\n  .replace(/\\n{4,}/g, '\\n\\n\\n')\n  // Trim whitespace\n  .trim();\n\n// Add personalization if it's a greeting or confirmation\nif (formatted.toLowerCase().includes('hello') || formatted.toLowerCase().includes('hi')) {\n  formatted = formatted.replace(/(hello|hi)/gi, `$1 ${userName.split(' ')[0]}`);\n}\n\n// Check length and split if necessary\nconst maxLength = 4000;\nconst messages = [];\n\nif (formatted.length > maxLength) {\n  // Split into multiple messages at natural break points\n  const parts = formatted.split('\\n\\n');\n  let currentMessage = '';\n  \n  for (const part of parts) {\n    if ((currentMessage + part).length > maxLength) {\n      if (currentMessage) messages.push(currentMessage.trim());\n      currentMessage = part;\n    } else {\n      currentMessage += (currentMessage ? '\\n\\n' : '') + part;\n    }\n  }\n  \n  if (currentMessage) messages.push(currentMessage.trim());\n  \n  // Add continuation indicators\n  for (let i = 0; i < messages.length; i++) {\n    if (i < messages.length - 1) {\n      messages[i] += '\\n\\n_(Continued...)_';\n    }\n    if (i > 0) {\n      messages[i] = `_(Continued from previous message)_\\n\\n${messages[i]}`;\n    }\n  }\n} else {\n  messages.push(formatted);\n}\n\n// Create WhatsApp message objects\nconst whatsappMessages = messages.map(msg => ({\n  messaging_product: \"whatsapp\",\n  to: userPhone,\n  type: \"text\",\n  text: {\n    body: msg\n  }\n}));\n\n// Return array of messages to send\nreturn whatsappMessages.map(msg => ({ json: msg }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 0],
+      "id": "response-formatter",
+      "name": "Advanced Response Formatter"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v22.0/812226575317061/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "lowercaseHeaders": false,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2000, 0],
+      "id": "send-response",
+      "name": "Send WhatsApp Response",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "sPfnz3eITOXitarx",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v22.0/812226575317061/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.userPhone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"body\": \"⚠️ Slow down there! You've sent {{ $json.waitTime }} messages in the last minute. Please wait {{ $json.waitTime }} seconds before sending another message. This helps me serve you better! 😊\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 100],
+      "id": "rate-limit-response",
+      "name": "Send Rate Limit Message",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "sPfnz3eITOXitarx",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Analytics and logging\nconst data = $input.item.json;\n\n// Initialize analytics storage\nif (!globalThis.analytics) {\n  globalThis.analytics = {\n    totalRequests: 0,\n    successfulRequests: 0,\n    failedRequests: 0,\n    userStats: {}\n  };\n}\n\n// Update global stats\nglobalThis.analytics.totalRequests++;\nif (data.success) {\n  globalThis.analytics.successfulRequests++;\n} else {\n  globalThis.analytics.failedRequests++;\n}\n\n// Update user-specific stats\nconst userPhone = data.userPhone;\nif (!globalThis.analytics.userStats[userPhone]) {\n  globalThis.analytics.userStats[userPhone] = {\n    totalRequests: 0,\n    lastRequest: null,\n    firstRequest: new Date().toISOString()\n  };\n}\n\nglobalThis.analytics.userStats[userPhone].totalRequests++;\nglobalThis.analytics.userStats[userPhone].lastRequest = new Date().toISOString();\n\n// Log to console (visible in n8n logs)\nconsole.log('Analytics Update:', {\n  user: userPhone,\n  success: data.success,\n  timestamp: new Date().toISOString(),\n  globalStats: {\n    total: globalThis.analytics.totalRequests,\n    success: globalThis.analytics.successfulRequests,\n    failed: globalThis.analytics.failedRequests,\n    successRate: (globalThis.analytics.successfulRequests / globalThis.analytics.totalRequests * 100).toFixed(2) + '%'\n  }\n});\n\nreturn { json: data };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 0],
+      "id": "analytics-logger",
+      "name": "Analytics Logger"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [[{ "node": "Advanced Message Parser", "type": "main", "index": 0 }]]
+    },
+    "Advanced Message Parser": {
+      "main": [[{ "node": "Message Filter", "type": "main", "index": 0 }]]
+    },
+    "Message Filter": {
+      "main": [[{ "node": "Rate Limiter", "type": "main", "index": 0 }]]
+    },
+    "Rate Limiter": {
+      "main": [[{ "node": "Rate Limit Check", "type": "main", "index": 0 }]]
+    },
+    "Rate Limit Check": {
+      "main": [
+        [{ "node": "Send Typing Indicator", "type": "main", "index": 0 }],
+        [{ "node": "Send Rate Limit Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Typing Indicator": {
+      "main": [[{ "node": "Advanced AI Agent", "type": "main", "index": 0 }]]
+    },
+    "Gemini 2.0 Flash": {
+      "ai_languageModel": [[{ "node": "Advanced AI Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Conversation Memory": {
+      "ai_memory": [[{ "node": "Advanced AI Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "Gmail Search & Read": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Gmail Send New Email": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Gmail Reply to Email": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Gmail Delete Email": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Calendar View Schedule": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Calendar Create Event": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Calendar Update Event": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Calendar Delete Event": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Contact Lookup": {
+      "ai_tool": [[{ "node": "Advanced AI Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Advanced AI Agent": {
+      "main": [[{ "node": "Advanced Error Handler", "type": "main", "index": 0 }]]
+    },
+    "Advanced Error Handler": {
+      "main": [[{ "node": "Advanced Response Formatter", "type": "main", "index": 0 }]]
+    },
+    "Advanced Response Formatter": {
+      "main": [[{ "node": "Send WhatsApp Response", "type": "main", "index": 0 }]]
+    },
+    "Send WhatsApp Response": {
+      "main": [[{ "node": "Analytics Logger", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "versionId": "",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "072954c8bf6ce99e32995329e800b426e304054c3722ade30814dc585c9f8faa"
+  },
+  "id": "",
+  "tags": []
+}
